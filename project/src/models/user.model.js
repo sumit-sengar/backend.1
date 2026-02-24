@@ -40,6 +40,12 @@ const userSchema=new Schema(
             enum:AvailableUserRole,
             default:UserRolesEunm.REVIEWER,
         },
+        profilePicture:{
+            fileName:String,
+            filePath:String,
+            mimeType:String,
+            size:Number,
+        },
         refreshToken:{
             type:String,
         },
@@ -49,6 +55,7 @@ const userSchema=new Schema(
         forgotPasswordExpiry:{
             type:Date,
         },
+
 
     },
     {
@@ -108,7 +115,6 @@ userSchema.methods.generateRefreshToken=function()
     )
 };
 
-userSchema.index({email:1})
 userSchema.index({createdAt:-1})
 
 

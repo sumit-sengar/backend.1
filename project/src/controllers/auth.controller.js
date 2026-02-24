@@ -2,8 +2,11 @@ import {User} from "../models/user.model.js"
 import {ApiResponse} from "../utils/api-response.js"
 import {ApiError} from "../utils/api-error.js"
 import {asyncHandler} from "../utils/async-handler.js"
+import {sendMail,forgotpassowrdMailgenContent} from "../utils/mail.js"
 import crypto from "crypto"
 import jwt from "jsonwebtoken"
+import path from "path"
+import fs from "fs"
 
 const generateAccessAndRefreshToken=async(userId)=>{
     try {
@@ -60,7 +63,7 @@ const login=asyncHandler(async(req,res)=>{
 
     if(!email)
     {
-        throw new ApiError(400,"email is required")
+        throw new ApiError(400,"Email is required")
     }
     const user=await User.findOne({email});
     
@@ -95,7 +98,7 @@ const login=asyncHandler(async(req,res)=>{
                 accessToken,
                 refreshToken
             },
-            "user logged in sucessfully"
+            "User logged in sucessfully"
         )
     )
 
@@ -138,11 +141,10 @@ const getUserdetails=asyncHandler(async(req,res)=>{
 })
 
 const getMe=asyncHandler(async(req,res)=>{
+    const role= await req.user?.role;
     return res.status(200).json(
-        new ApiResponse(200,{},"user is authenticated")
+        new ApiResponse(200,{role:role  },"user is authenticated")
     );
-
-    
 });
 
 
@@ -179,6 +181,17 @@ const getUsers=asyncHandler(async(req,res)=>{
     ]);
 
     const totalCount = users[0].metadata[0]?.totalCount || 0;
+    const baseUrl=req.protocol+"://"+req.get("host");
+   
+    const userWithImages=users[0].data.map(user=>{
+    return{
+        ...user,
+        profilePictureUrl:user.profilePicture?.filePath
+        ? baseUrl+"/"+user.profilePicture.filePath.replace(/\\/g,"/")
+        :null,
+    };
+    });
+
 
     res.status(200).json({
       success: true,
@@ -188,9 +201,10 @@ const getUsers=asyncHandler(async(req,res)=>{
         pageSize,
         totalPages: Math.ceil(totalCount / pageSize),
       },
-      data: users[0].data,
+      data: userWithImages,
     });
   } catch (error) {
+    console.error(error)
     res.status(500).json({
       success: false,
       message: "Something went wrong",
@@ -243,6 +257,110 @@ const updateUser =asyncHandler(async(req,res)=>{
     return res.status(200).json(
         new ApiResponse(200,{user:updatedUserDeatils},"user updated successfully")
     );
+});
+
+const uploadProfilePicture=asyncHandler(async(req,res)=>{
+    if(!req.file)
+    {
+        throw new ApiError(400,"No image provided");
+    }
+    const user=await User.findById(req.user?._id);
+    if(!user)
+    {
+        throw new ApiError(404,"User not found");
+    }
+
+    if(user.profilePicture?.filePath){
+        const oldPath=path.resolve(user.profilePicture.filePath);
+        if(fs.existsSync(oldPath))
+        {
+            fs.unlinkSync(oldPath);
+        }
+    }
+    user.profilePicture={
+        fileName:req.file.filename,
+        filePath:req.file.path,
+        mimeType:req.file.mimetype,
+        size:req.file.size,
+    };
+    await user.save({validateBeforeSave:false});
+    
+    return res.status(200).json(
+        new ApiResponse(200,{profilePicture:user.profilePicture},"Profile picture updated")
+    );
+});
+
+const uploadProfilePictureAdmin=asyncHandler(async(req,res)=>{
+    if(!req.file)
+    {
+        throw new ApiError(400,"No image provided");
+    }
+    const {email}=req.body
+    const user=await User.findOne({email})
+    if(!user)
+    {
+        throw new ApiError(404,"User not found");
+    }
+
+    if(user.profilePicture?.filePath){
+        const oldPath=path.resolve(user.profilePicture.filePath);
+        if(fs.existsSync(oldPath))
+        {
+            fs.unlinkSync(oldPath);
+        }
+    }
+    user.profilePicture={
+        fileName:req.file.filename,
+        filePath:req.file.path,
+        mimeType:req.file.mimetype,
+        size:req.file.size,
+    };
+    await user.save({validateBeforeSave:false});
+    
+    return res.status(200).json(
+        new ApiResponse(200,{profilePicture:user.profilePicture},"Profile picture updated")
+    );
+});
+
+const deleteProfilePicture=asyncHandler(async(req,res)=>{
+    const user=await User.findById(req.user._id);
+    if(!user)
+    {
+        throw new ApiError(404,"User not found");
+    }
+    if(!user.profilePicture?.filePath){
+        return res.status(200).json(new ApiResponse(200,{},"No profile picture found"));
+    }
+    const imgPath=path.resolve(user.profilePicture.filePath);
+    if(fs.existsSync(imgPath)){
+        fs.unlinkSync(imgPath);
+    }
+
+    user.profilePicture=undefined;
+    await user.save({validateBeforeSave:false});
+
+    return res.status(200).json(new ApiResponse(200,{},"Profile picture deleted"));
+});
+
+const deleteProfilePictureAdmin=asyncHandler(async(req,res)=>{
+    const {email}=req.body
+    const user=await User.findOne({email})
+    if(!user)
+    {
+        throw new ApiError(404,"User not found");
+    }
+    if(!user.profilePicture?.filePath){
+        return res.status(200).json(new ApiResponse(200,{},"No profile picture found"));
+    }
+    const imgPath=path.resolve(user.profilePicture.filePath);
+    if(fs.existsSync(imgPath)){
+        fs.unlinkSync(imgPath);
+    }
+
+    user.profilePicture=undefined;
+    await user.save({validateBeforeSave:false});
+
+    return res.status(200).json(new ApiResponse(200,{},"Profile picture deleted"));
 });
 
 const refreshAccessToken=asyncHandler(async(req,res)=>{
@@ -307,11 +425,20 @@ const requestResetPassword=asyncHandler(async(req,res)=>{
         throw new ApiError(404,"User not found to be registered",[])
     }
     const {unhashedToken,hashedToken,tokenExpiry}=await user.generateTemporaryToken();
-
     user.forgotPasswordToken=hashedToken;
     user.forgotPasswordExpiry=tokenExpiry;
+    
+
     await user.save({validateBeforeSave:false});
-    console.log(unhashedToken);//for testing need to be sent to user via mail
+
+    await sendMail({
+        email:user?.email,
+        subject:"password reset request",
+        mailgenContent:forgotpassowrdMailgenContent(
+            user.username,
+            `${process.env.FORGOT_PASSWORD_REDIRECT_URL}/${unhccccashedToken}`
+        ),
+    });
     return res.status(200).json(
         new ApiResponse(200,{},"forgot password link sent")
     );
@@ -341,4 +468,4 @@ const forgotPasswordReset=asyncHandler(async(req,res)=>{
 
 
 
-export {registerUser,login,getUsers,deleteUser,updateUser,logoutUser,refreshAccessToken,resetUserPassword,requestResetPassword,forgotPasswordReset,getUserdetails,getMe};
+export {registerUser,login,getUsers,deleteUser,updateUser,logoutUser,refreshAccessToken,resetUserPassword,requestResetPassword,forgotPasswordReset,getUserdetails,getMe,uploadProfilePicture,deleteProfilePicture,uploadProfilePictureAdmin,deleteProfilePictureAdmin};
